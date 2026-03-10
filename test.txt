@@ -1,0 +1,365 @@
+Build a Large Language Model from Scratch
+
+This thesis is a summary of [1] and reports on the experience with it.
+
+All code implementations developed for this report are available in the GitHub repository [2].
+
+REPORT 5
+Pretraining on unlabeled data
+Giorgi Gogsadze
+Revaz Goguadze
+Supervised by Prof. Walter Tichy
+
+Structure
+	Evaluating generative text models
+	Training and validation losses
+	LLM Training loop implementation
+	Improving the Training Loop
+	Decoding strategies (temperature, top-k)
+	Saving and loading model weights
+	Loading pretrained GPT-2 weights
+
+
+Except for the exercise solutions and tests, all the code presented in this work are adapted from Chapter 5 and appendix D of [1].
+
+
+
+
+
+
+The goal of the report is to pretrain the model on unlabeled (raw) text data, that will allow our model to learn patterns of language. Unlike supervised learning tasks, language models do not require labeled datasets. Instead, they are trained to predict the next token in a sequence. By repeatedly performing this prediction across large text, the model gradually learns grammar, semantic relationships, and contextual dependencies between words. Before training the model, we need a way to measure how well it performs.
+
+
+Evaluating generative text models 
+
+In language models, performance is measured by how accurately the model predicts the next token in a sequence. If the model gives a high probability to the correct token, the prediction is good. If the probability is low, the prediction is poor.
+The difference between the probability of token predicted by model and the actual token is called a loss. A smaller loss indicates better predictions.
+During training, the objective of the model is to minimize this loss by adjusting its parameters, that initially are generated randomly (or imported from already existing model). The loss value therefore serves as an indicator of training progress, and a well-behaving model should show decreasing loss values over time.
+To evaluate whether the model is learning general language patterns rather than memorizing the data, performance is measured on two datasets:
+	Training set – used to update the model’s parameters
+	Validation set – used only for evaluation
+If the training loss decreases while the validation loss remains high, the model is likely overfitting, meaning it memorizes the training data instead of learning general patterns.
+
+In language modeling, the correct output for each token is simply the next token in the sequence. Therefore, the training data is organized so that each input sequence is paired with a target sequence shifted by one position.
+Input sequence	Target sequence
+every effort moves	effort moves you
+ Example:
+
+
+This means the model learns to predict:
+	given “every”, predict “effort”
+	given “every effort”, predict “moves”
+	given “every effort moves”, predict “you”
+By repeating this task across large datasets, the model gradually learns patterns of language.
+
+Calculating the loss
+1. As explained in the report 4, when a sequence is processed by the GPT model, the network produces logits, which are numerical scores representing the model’s confidence for each token in the vocabulary. 
+2. After applying softmax, we can examine the assigned probability of all 50,257 tokens. 
+3. A high probability of the correct tokens indicates a good prediction, while a very small probability indicates a poor one. Ideally, the model should assign a probability close to 1 to the correct token and close to 0 to all others. However, before training the model usually assigns almost the same probability to every token in the vocabulary, which means it behaves like random guessing.
+4. To measure prediction quality, we compute the logarithm of the probability assigned to the correct token. Logarithm makes it easier to see how good the prediction is. When the correct token has a high probability, the logarithm is close to 0. When the probability is very small, the logarithm becomes a large negative number, showing that the prediction is poor.
+5. When training a language model, we do not predict just one token. Each training example contains many tokens. Instead of keeping all these values separately, we compute their average. This gives one single number representing how well the model predicted the whole sequence.
+6. Since probabilities are between 0 and 1, their logarithms are always negative or zero. To obtain a positive value that can be minimized during training, we multiply the result by −1.
+
+ 
+
+The resulting value indicates how far the model’s predictions are from the correct tokens. In practice, these steps are combined into a single metric called cross-entropy loss. 
+Role of Loss in Training
+The loss value is central to training neural networks because it tells us how wrong the model’s predictions are. After computing the loss, the model performs backpropagation, a process that determines how much each parameter in the network contributed to this error.
+Backpropagation starts from the output layer, and the algorithm computes how the loss changes with respect to each parameter. The result of this process is a set of values called gradients. A gradient indicates how a parameter should change in order to reduce the loss. If the gradient is large, the parameter has a strong influence on the error; if it is small, the parameter has little effect.
+These gradients are then used by the optimizer to update the model’s parameters in the direction that reduces the loss. By repeating this process over many training steps, the model gradually improves its predictions.
+The training process can be summarized in three steps:
+Forward pass – the model makes predictions.
+Loss calculation – the error between predictions and the correct values is measured.
+Backpropagation – the model determines which parameters caused the error and how they should be adjusted.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Training and validation losses
+
+To demonstrate the training process in a manageable setting, we use a small dataset containing the short story “The Verdict” by Edith Wharton. Although the dataset contains only a few thousand tokens, it is sufficient to illustrate the mechanics of language model training.
+
+Preparing the Dataset
+The dataset is loaded as raw text and converted into tokens using the tokenizer introduced in Report 2. The tokenized text is divided into sequences that match the model’s context length, which is set to 256 tokens in this implementation.
+These sequences are grouped into batches, allowing the model to process multiple examples simultaneously and improving computational efficiency. The dataset is also split into 90% training data and 10% validation data, ensuring that part of the data remains unseen during training.
+
+Data Loaders
+To efficiently supply batches of data to the model, the dataset is processed using data loaders (See Report 2). Each batch contains two tensors: input tokens and target tokens. The target tokens correspond to the input tokens shifted by one position so that the model always learns to predict the next token in the sequence.
+
+Computing Loss for the Dataset
+To evaluate overall performance, the loss must be computed across all batches in the dataset. This is done by iterating over the data loader and averaging the loss values.
+The resulting dataset loss summarizes how well the model predicts tokens across the entire dataset.
+Before training begins, both training and validation losses are typically high because the model parameters are randomly initialized. As training progresses, these values should gradually decrease.
+
+Interpreting Training and Validation Loss
+Monitoring both losses provides insight into the model’s learning behavior.
+During successful training:
+	training loss decreases, indicating that the model is learning patterns in the data
+	validation loss also decreases, indicating that the model generalizes to unseen text
+
+
+LLM Training loop implementation
+
+After defining how to compute training and validation losses, the next step is to train the language model. Training gradually improves the model’s predictions by adjusting its internal parameters to minimize the loss function.
+The training loop is a standard process in deep learning and typically follows the steps shown in figure 2:
+ 
+
+An epoch represents one complete pass through the training dataset. Since datasets are often large, they are divided into smaller batches so the model can process them efficiently.
+During each iteration, the model receives a batch of token sequences and predicts the next token for each position. The predictions are then compared with the target tokens to compute the loss.
+Once the loss is computed, the model performs backpropagation, that produces a set of gradients indicating how the parameters should change to reduce the loss. These gradients are then used by an optimization algorithm to update the model weights. Over many iterations, these updates gradually improve the model’s ability to predict the next token.
+
+Optimization with AdamW
+In this implementation, the model is trained using the AdamW optimizer, which is commonly used for training transformer models.
+a parameter w is updated as
+w_{new}\ =\ w_{old}-\ \eta\cdotgradient\ 
+where \eta is the learning rate, which controls how large the update step is.
+However, using the same learning rate for every parameter can make training slow or unstable. Adam improves this by automatically adjusting the learning rate for each parameter based on how the gradients behaved in previous training steps. This allows the model to learn faster and more reliably.
+AdamW is a modified version of Adam that includes decoupled weight decay. As explained in [3], weight decay slightly reduces the size of the model’s weights during training:
+w_{new}=w_{old}-\eta\cdotgradient-\eta\lambda w
+where λ is the weight decay coefficient (set to 0.1 in this implementation), controlling how aggressively weights are penalized for growing large.
+This prevents the weights from becoming too large, which helps reduce overfitting and improves the model’s ability to generalize to new data.
+Because of its stability, adaptive learning rates, and built-in regularization, AdamW has become a standard optimizer for training transformer-based models.
+
+Training Results
+While training, it is important to monitor the model’s progress to ensure that learning occurs as expected. Training loss measures performance on the training data, while validation loss measures performance on unseen data. 
+ 
+As we see in Figure 3, in the beginning of training Both losses are very high and almost equal. Because the model weights are randomly initialized, it assigns almost same probabilities to all tokens.
+p\approx\frac{1}{50257}\ \ \ \ \ \ \  		  		-\log{\left(\frac{1}{50257}\right)}\approx10
+Our loss ≈ 9.9 is exactly what we expect.
+
+In the early learning phase Training loss is dropping quickly, as the model is learning basic patterns: common words, punctuation, simple token relationships. Even simple improvements drastically reduce loss.
+
+In general Training loss Keeps dropping strongly. Since the dataset is small, the model can almost remember the exact sequences. On the other hand, validation loss stops improving and even gets slightly worse. This is overfitting. However, this behavior is expected because the dataset contains only a few thousand tokens while the model has a much larger capacity.
+
+In addition to numerical metrics, it is also useful to periodically generate text samples during training. 
+
+Epoch	Generated text
+1	Every effort moves you,,,,,,,,,,,,,,.                                   
+5	Every effort moves you know the "Oh, and he had to me--I me. "Oh, I felt--and it's the  "Oh, and I had been the donkey--and it to me, and down the "Oh,
+10	Every effort moves you?"  "Yes--quite insensible to the irony. She wanted him vindicated--and by me!"  He laughed again, and threw back his head to look up at the sketch of the donkey. "There were days when I
+
+At epoch 1, the model produces grammatically broken output, indicating no learned structure yet. By epoch 5, punctuation and short phrases emerge, but the model fixates on patterns like 'Oh,' suggesting it is latching onto frequent tokens. By epoch 10, the output closely mirrors actual passages from The Verdict — a clear sign of memorization rather than generalization, consistent with the diverging training/validation losses seen in Figure 3.
+However, when training on small datasets, the model may eventually begin to memorize the training data. In such cases, generated text may reproduce passages from the dataset rather than producing entirely new content.
+This limitation highlights why modern language models are typically trained on very large datasets containing billions of tokens.
+
+
+
+Improving the Training Loop
+
+The training loop implemented earlier provides a simple example of how a language model can be pretrained. However, modern large language model training typically includes additional techniques that improve training stability and performance.
+	Learning rate warmup
+	Cosine learning rate decay
+	Gradient clipping
+
+Training can be unstable at the beginning if the learning rate is too high. Learning rate warmup solves this by starting with a small learning rate and gradually increasing it until the peak value is reached.
+lr_increment = (peak_lr - initial_lr) / warmup_steps
+if global_step < warmup_steps:            
+lr = initial_lr + global_step * lr_increment
+else:
+lr = peak_lr
+
+This allows the model to start training cautiously and avoids unstable updates in the early stages. Warmup typically lasts between 0.1% and 20% of the total training steps.
+
+After the warmup phase, the learning rate is gradually reduced using cosine decay, allowing larger updates early in training and smaller updates later, as it approaches a good solution. The learning rate can be computed as:
+progress = ((global_step - warmup_steps) / 
+(total_training_steps - warmup_steps))
+lr = min_lr + (peak_lr - min_lr) * 0.5 * (1 + math.cos(math.pi * progress))
+
+where progress indicates how far training has advanced.
+
+This produces a smooth schedule where the learning rate first increases and then gradually decreases (See figure 4). Cosine decay helps the model converge more smoothly.
+ 
+
+Gradient Clipping
+Training deep networks can also suffer from exploding gradients, where gradients become excessively large. Gradient clipping limits their magnitude to stabilize training.
+
+torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+If the gradient norm exceeds the threshold, the gradients are scaled down so that their magnitude remains within the specified limit. This helps stabilize training, especially for deep transformer models.
+
+Modified Training Function and Results
+The overall structure of the training loop remains the same, but the learning rate is adjusted dynamically during training. These improvements are commonly used in modern transformer training pipelines and help achieve more stable and efficient optimization.
+
+ 
+
+Due to hardware constraints, the model was trained on a relatively small dataset. As a result, overfitting occurs even when using the improved training process (See Figure 5). Although the overall results are similar to the previous training, the training curves differ, indicating that the introduced changes influence the training dynamics.
+
+
+
+
+
+
+
+Decoding strategies (temperature, top-k)
+
+After training a language model, it can be used to generate text. However, the quality and diversity of the generated output depend not only on the model itself but also on how the next token is selected. The method used to choose the next token is called a decoding strategy.
+The simplest approach is Greedy Decoding - selecting the token with the highest probability at each step. While this often produces coherent text, it can also lead to repetitive or predictable outputs. To introduce controlled randomness, several decoding strategies are used. Two common techniques are temperature scaling and top-k sampling, which allow us to balance coherence and diversity during generation.
+
+Temperature Scaling
+Temperature scaling modifies the probability distribution before selecting the next token. The logits produced by the model are divided by a temperature value before applying the softmax function.
+The temperature parameter controls how sharp or flat the probability distribution becomes:
+	temperature = 1 → original distribution
+	temperature < 1 → sharper distribution (more deterministic output)
+	temperature > 1 → flatter distribution (more diverse output)
+Higher temperatures increase creativity but may also produce grammatically incorrect or nonsensical sentences.
+
+Exercise 5.1
+To analyze the influence of temperature, the probability distribution was evaluated for several temperature values: 0.01, 0.1, 1, 4, and 16. For each temperature, the print_sampled_tokens function samples tokens 1000 times according to their probabilities and prints the frequency of each token. A faster and more accurate way to determine how often the token pizza appears is to directly check its probability in the softmax distribution instead of relying on sampling.
+
+temperatures = [0.01, 0.1, 1, 4, 16]                                    
+for t in temperatures:
+    probas = softmax_with_temperature(next_token_logits, t)
+    print(f"temperature: {t}")
+    print_sampled_tokens(probas)
+    print(f"probability of pizza: {probas[6]}")
+    print("")
+
+temperature: 0.01
+0 x closer
+0 x every
+0 x effort
+1000 x forward
+probability of pizza: 0.0
+
+...  (complete result can be found in [2])
+
+temperature: 16
+128 x closer
+109 x every
+85 x effort
+163 x forward
+83 x inches
+93 x moves
+80 x pizza
+148 x toward
+111 x you
+probability of pizza: 0.08631856739521027
+
+The results show that the frequency of the token “pizza” increases as the temperature becomes larger:
+
+Temperature	“pizza” samples (out of 1000)	Frequency of pizza (“pizza” samples / 1000)	Actual Probability of “pizza”
+0.01	0	0	0.0
+0.1	0	0	≈ 2.97 × 10⁻³⁸
+1	0	0	≈ 0.00010
+4	23	0.023	≈ 0.0319
+16	80	0.08	≈ 0.0863
+
+For very low temperatures (0.01 and 0.1), the probability distribution becomes very sharp, so almost all probability is assigned to the most likely token (“forward”), and pizza is never sampled.
+For higher temperatures (4 and 16), the distribution becomes flatter, increasing the chance of sampling less likely tokens such as pizza. 
+This behavior explains why very high temperatures often produce more creative but less coherent text, while very low temperatures lead to deterministic outputs.
+
+
+Top-k Sampling
+Another commonly used decoding strategy is top-k sampling. Instead of sampling from the entire vocabulary, the model selects the next token only from the k most probable tokens, all other tokens are ignored.
+This prevents extremely unlikely tokens from being selected while still allowing some variation in the output.
+
+Exercise 5.2 and 5.3
+To explore the effects of temperature and top-k sampling, several combinations of these parameters were tested using both the locally trained model and the pretrained GPT-2 model. To obtain deterministic output, we can set top_k = 1 and temperature = 0.
+
+Model	temperature	top_k	Example generated output
+Local	1.4	5	Every effort moves you know terrace. "I glanced after him, with a little last
+Local	15	25	Every effort moves you as though, or Florence me afterward ins geniused that dep Mrs of such
+Local	0	1	Every effort moves you?"
+"Yes--quite insensible to the irony. She wanted
+GPT2-s	1.4	5	Every effort moves you forward in the life of the person, but it's a very hard thing
+GPT2-s	15	25	Every effort moves you to reach where a particular value is most effective, and you try all these
+GPT2-s	0	1	Every effort moves you forward.
+The first step is to understand the importance of your work
+
+Experiments show that temperature and top-k strongly affect the randomness and structure of generated text.
+With top_k = 5, the model chooses among only the five most probable tokens, producing more predictable and coherent sentences. This is useful for tasks requiring accuracy, such as technical writing, code generation, or question answering.
+However, with temperature = 1.4 and top_k = 5, the local model produced “know terrace” (incoherent), while GPT-2 produced “forward in the life of…” (coherent). This difference occurs because the local model was trained on only ~4,000 tokens, resulting in a poor probability distribution.
+Increasing top_k to 25 allows sampling from more tokens, increasing variability. With a higher temperature (e.g., 15), less probable tokens appear more often, producing more creative but less structured text, that is useful for storytelling or brainstorming.
+Finally, with temperature = 0 and top_k = 1, generation becomes fully deterministic, always selecting the most probable token and producing the same output each run.
+
+Saving and loading model weights
+Training large language models is computationally expensive, so trained models are typically saved and reused instead of retraining them from scratch.
+In PyTorch, model parameters are stored in a structure called the state dictionary (state_dict), which maps layer names to their corresponding tensors. Saving a model therefore involves storing this state dictionary (usually in a .pth file), which can later be loaded into a model with the same architecture.
+If training needs to be resumed, the optimizer state should also be saved, since optimizers such as Adam or AdamW store additional information about past gradients. This allows training to continue from the same point.
+
+Exercise 5.4
+To continue training the model in a new session, the previously saved checkpoint containing the model and optimizer states must be loaded. 
+First, the checkpoint is loaded and the model architecture is recreated using the same configuration. The saved model parameters are then restored using the load_state_dict function.
+checkpoint = torch.load("model_and_optimizer.pth", map_location=device)
+model_imported = GPTModel(GPT_CONFIG_124M)
+model_imported.load_state_dict(checkpoint["model_state_dict"])
+model_imported.to(device)
+
+Next, the optimizer is recreated and its state is restored from the checkpoint.
+optimizer_imported = torch.optim.AdamW(
+model_imported.parameters(), lr=5e-4, weight_decay=0.1
+)
+optimizer_imported.load_state_dict(checkpoint["optimizer_state_dict"])
+
+After restoring the model and optimizer states, training can continue normally. The train_model_simple function is called with num_epochs = 1 to train the model for one additional epoch.
+model_imported.train()
+num_epochs = 1
+train_losses, val_losses, tokens_seen = train_model_simple(
+    model_imported, train_loader, val_loader, optimizer_imported, device,
+    num_epochs=num_epochs, eval_freq=5, eval_iter=5,
+    start_context="Every effort moves you", tokenizer=tokenizer
+)
+
+Recall that at the beginning of training (step 0), the model had a training loss of 9.821 and a validation loss of 9.931. After completing the initial training process, these values decreased to 0.708 and 6.387, respectively. When training was resumed from the saved checkpoint (rather than starting from scratch), the first step already showed a training loss of 0.550 and a validation loss of 6.417, indicating that the previously learned weights were successfully restored. The full implementation can be found in [2] (file Chapter5).
+This demonstrates that saving both the model parameters and the optimizer state allows the training process to resume without losing previously learned information.
+
+
+Loading pretrained GPT-2 weights
+
+Training large language models from scratch requires substantial computational resources. For this reason, pretrained models such as GPT-2 are often reused instead of training new models from the beginning. Pretrained weights can be loaded and used directly for text generation or further adapted through fine-tuning.
+OpenAI released several GPT-2 variants that differ mainly in the number of parameters. The downloaded parameters can be mapped to the corresponding layers of the implemented GPT model, including token embeddings, positional embeddings, attention projections, feed-forward layers, and normalization parameters. 
+
+Exercise 5.5
+To evaluate the pretrained GPT-2 model on The Verdict dataset, the training and validation losses were calculated using the calc_loss_loader function.
+Training loss: 3.5319405794143677	Validation loss: 3.5318045616149902
+These results indicate that the pretrained GPT-2 model performs reasonably well on The Verdict dataset. However, it is possible that this text was included in the data used during GPT-2 pretraining. If this is the case, the results would not fully reflect the model’s ability to generalize to previously unseen text.
+To further evaluate the model, an additional experiment was conducted using a different dataset. The dataset consisted of recently written English translations of Georgian history notes prepared by the co-author of this report, Giorgi Gogsadze. Since these notes were created after GPT-2 was trained, they could not have been part of its pretraining data. The obtained loss for this dataset was: 2.895763317743937
+The comparable loss values suggest that the pretrained GPT-2 model captures general language patterns rather than relying solely on memorized training data. The implementation of this experiment can be found in [2] (GPT2 file).
+
+Exercise 5.6
+To explore the effect of model size on text generation, the GPT-2 small model (124M parameters) and the GPT-2 XL model (1558M parameters) were tested using the same prompts. Two example prompts were used:
+
+Prompt 1: “Every effort moves you”
+	GPT-2 small:
+“Every effort moves you as far as the hand can go until the end of your turn unless something happens. This would remove you from a battle.”
+	GPT-2 XL:
+“Every effort moves you further to where you do not actually want to grow; you are still too much of an outsider. This has been demonstrated clearly.”
+
+Prompt 2: “The Capital of Georgia is”
+	GPT-2 small:
+“The Capital of Georgia is the place the capital can build infrastructure like a rail network. It's a very popular destination right after Georgia's economic prosperity.”
+	GPT-2 XL:
+“The Capital of Georgia is the place the capital can use because it was founded within Georgian territory but does not belong to it.”
+
+From these examples, it can be observed that the larger GPT-2 XL model tends to produce more fluent and stylistically coherent sentences, while the smaller model sometimes generates text that is less structured or logically inconsistent.
+This behavior is expected because larger models contain more parameters, allowing them to capture more complex language patterns and relationships between words. As a result, larger models generally produce higher-quality and more natural text, although they require significantly more computational resources.
+
+Next Steps
+As we have seen, once the pretrained weights are loaded, the model can immediately generate coherent text. In later chapters, these weights will be further used for fine-tuning tasks such as text classification and instruction following.
+
+
+
+
+
+References
+
+[1] Raschka, S. (2024). Build a large language model (from scratch). Shelter Island, NY: Manning Publications.
+[2] Giorgi Gogsadze, Revaz Goguadze. LLM From Scratch Code Repository.
+Available at: https://github.com/GiorgiGogsadze/LLM-From-Scratch-Thesis
+[3] Loshchilov, I., & Hutter, F. (2017). Decoupled Weight Decay Regularization. arXiv:1711.05101.
